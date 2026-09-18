@@ -1,0 +1,6 @@
+browser_profile/
+storage_state.json
+reports/
+__pycache__/
+*.pyc
+*.csv
