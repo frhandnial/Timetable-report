@@ -18,9 +18,13 @@ import csv
 import json
 import re
 import sys
+from collections import OrderedDict
 from datetime import datetime, timedelta
 from pathlib import Path
 from playwright.sync_api import sync_playwright
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.worksheet.pagebreak import Break
 
 HERE = Path(__file__).parent
 STATE_FILE = HERE / "storage_state.json"
@@ -182,15 +186,115 @@ def write_csv(rows, path):
     print(f"\nSaved CSV: {path}")
 
 
+def write_xlsx(rows, path, title):
+    """Write a grouped, readable Excel timetable with merged week headings."""
+    title_fill = PatternFill("solid", fgColor="1F4E78")
+    week_fill = PatternFill("solid", fgColor="2F75B5")
+    header_fill = PatternFill("solid", fgColor="D9EAF7")
+    alternate_fill = PatternFill("solid", fgColor="F5F9FD")
+    white_bold = Font(color="FFFFFF", bold=True)
+    thin = Side(style="thin", color="B7C9D6")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    columns = [
+        ("Date", lambda row: datetime.strptime(row["date"], "%Y-%m-%d").strftime("%A, %d %B %Y")),
+        ("Time", lambda row: f"{row['start']} - {row['end']}"),
+        ("Module", lambda row: row["module"]),
+        ("Activity", lambda row: row["type"]),
+        ("Location", lambda row: row["location"]),
+        ("Lecturer(s)", lambda row: row["lecturer"]),
+    ]
+
+    weeks = OrderedDict()
+    for row in rows:
+        date = datetime.strptime(row["date"], "%Y-%m-%d")
+        monday = date - timedelta(days=date.weekday())
+        weeks.setdefault(monday, []).append(row)
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Timetable"
+    sheet.sheet_view.showGridLines = False
+    sheet.merge_cells("A1:F1")
+    cell = sheet["A1"]
+    cell.value = title
+    cell.fill = title_fill
+    cell.font = Font(color="FFFFFF", bold=True, size=16)
+    cell.alignment = Alignment(horizontal="center", vertical="center")
+    sheet.row_dimensions[1].height = 28
+
+    current_row = 3
+    for week_number, (monday, events) in enumerate(weeks.items(), start=1):
+        sunday = monday + timedelta(days=6)
+        sheet.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=6)
+        cell = sheet.cell(current_row, 1)
+        cell.value = f"Week {week_number} | {monday:%d %b} - {sunday:%d %b %Y}"
+        cell.fill = week_fill
+        cell.font = white_bold
+        cell.alignment = Alignment(vertical="center")
+        sheet.row_dimensions[current_row].height = 22
+        current_row += 1
+
+        for column, (heading, _) in enumerate(columns, start=1):
+            cell = sheet.cell(current_row, column, heading)
+            cell.fill = header_fill
+            cell.font = Font(bold=True, color="17365D")
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = border
+        current_row += 1
+        first_event_row = current_row
+
+        for index, event in enumerate(events):
+            for column, (_, value) in enumerate(columns, start=1):
+                cell = sheet.cell(current_row, column, value(event))
+                cell.alignment = Alignment(vertical="top", wrap_text=True)
+                cell.border = border
+                if index % 2:
+                    cell.fill = alternate_fill
+            sheet.row_dimensions[current_row].height = 42
+            current_row += 1
+
+        if events:
+            sheet.row_dimensions.group(first_event_row, current_row - 1, outline_level=1, hidden=False)
+        sheet.row_breaks.append(Break(id=current_row))
+        current_row += 1
+
+    for column, width in {"A": 25, "B": 15, "C": 48, "D": 22, "E": 50, "F": 34}.items():
+        sheet.column_dimensions[column].width = width
+    sheet.sheet_properties.outlinePr.summaryBelow = False
+    sheet.page_setup.orientation = "landscape"
+    sheet.page_setup.fitToWidth = 1
+    sheet.print_title_rows = "1:1"
+    workbook.save(path)
+    print(f"\nSaved formatted Excel workbook: {path}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fetch CMISGo timetable report")
     parser.add_argument("--offset", type=int, default=0, help="Weeks from current week (0=this week, 1=next week)")
     parser.add_argument("--month", type=str, default=None, help="Calendar month as YYYY-MM, e.g. 2026-10")
+    parser.add_argument("--from", dest="start_date", type=str, default=None, help="Start date as YYYY-MM-DD; use with --to")
+    parser.add_argument("--to", dest="end_date", type=str, default=None, help="End date as YYYY-MM-DD (inclusive); use with --from")
     parser.add_argument("--csv", action="store_true", help="Also write a CSV file")
     parser.add_argument("--out", type=str, default=None, help="Exact output path for the CSV (overrides --csv default location)")
+    parser.add_argument("--xlsx", action="store_true", help="Also write a formatted Excel timetable with merged week headings")
+    parser.add_argument("--out-xlsx", type=str, default=None, help="Exact output path for the Excel workbook (implies --xlsx)")
     args = parser.parse_args()
 
-    if args.month:
+    if bool(args.start_date) != bool(args.end_date):
+        parser.error("--from and --to must be used together")
+
+    if args.start_date:
+        try:
+            range_start = datetime.strptime(args.start_date, "%Y-%m-%d")
+            last_day = datetime.strptime(args.end_date, "%Y-%m-%d")
+        except ValueError:
+            parser.error("--from and --to must use YYYY-MM-DD")
+        if last_day < range_start:
+            parser.error("--to must be on or after --from")
+        range_end = last_day + timedelta(days=1)
+        label = "Custom Range Timetable"
+        default_name = f"timetable_{range_start.strftime('%Y-%m-%d')}_to_{last_day.strftime('%Y-%m-%d')}.csv"
+    elif args.month:
         year, month = (int(x) for x in args.month.split("-"))
         range_start = datetime(year, month, 1)
         range_end = datetime(year + 1, 1, 1) if month == 12 else datetime(year, month + 1, 1)
@@ -205,7 +309,7 @@ def main():
         label = "Weekly Timetable"
         default_name = f"timetable_{range_start.strftime('%Y-%m-%d')}.csv"
 
-    wide = bool(args.month) or abs(args.offset) > 1
+    wide = bool(args.month) or bool(args.start_date) or abs(args.offset) > 1
     events = fetch_events(wide=wide)
     rows = build_range_rows(events, range_start, range_end)
     print_report(rows, range_start, range_end, label=label)
@@ -219,6 +323,16 @@ def main():
             out_dir.mkdir(exist_ok=True)
             csv_path = out_dir / default_name
         write_csv(rows, csv_path)
+
+    if args.xlsx or args.out_xlsx:
+        if args.out_xlsx:
+            xlsx_path = Path(args.out_xlsx)
+            xlsx_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            out_dir = HERE / "reports"
+            out_dir.mkdir(exist_ok=True)
+            xlsx_path = out_dir / default_name.replace(".csv", "_formatted.xlsx")
+        write_xlsx(rows, xlsx_path, label)
 
 
 if __name__ == "__main__":

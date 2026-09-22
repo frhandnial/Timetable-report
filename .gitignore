@@ -1,6 +1,11 @@
 browser_profile/
 storage_state.json
 reports/
+scripts/browser_profile/
+scripts/storage_state.json
+scripts/reports/
+scripts/login_status.txt
+scripts/timetable_dump.html
 __pycache__/
 *.pyc
 *.csv

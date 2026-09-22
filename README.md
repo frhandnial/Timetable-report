@@ -38,6 +38,13 @@ Log in once (or whenever your session has expired):
 python scripts/login_setup.py
 ```
 
+When launching the login flow through Codex, use the companion helper instead.
+It writes a local status file while it waits for the authenticated CMISGo page:
+
+```
+python scripts/codex_login_setup.py
+```
+
 Then fetch a report:
 
 ```
@@ -45,7 +52,9 @@ python scripts/get_timetable.py                       # current week, printed to
 python scripts/get_timetable.py --offset 1             # next week
 python scripts/get_timetable.py --offset -1            # last week
 python scripts/get_timetable.py --csv                  # also write a CSV to ./reports/
+python scripts/get_timetable.py --xlsx                 # write a formatted Excel timetable with Week 1, Week 2, ... headings
 python scripts/get_timetable.py --month 2026-10 --csv  # a full calendar month
+python scripts/get_timetable.py --from 2026-09-28 --to 2026-12-25 --xlsx  # an inclusive date range as formatted Excel
 python scripts/get_timetable.py --month 2026-10 --out "C:\path\to\file.csv"  # exact output path
 ```
 
@@ -55,8 +64,11 @@ python scripts/get_timetable.py --month 2026-10 --out "C:\path\to\file.csv"  # e
 |---|---|
 | `--offset N` | Weeks from the current week (0 = this week, 1 = next week, -1 = last week). Ignored if `--month` is set. |
 | `--month YYYY-MM` | Fetch a full calendar month instead of a week. |
+| `--from YYYY-MM-DD` / `--to YYYY-MM-DD` | Fetch an inclusive custom date range. Use the two flags together. |
 | `--csv` | Also write a CSV into `./reports/timetable_<date>.csv`. |
 | `--out PATH` | Write the CSV to an exact path instead (implies `--csv`). |
+| `--xlsx` | Write a formatted Excel workbook with merged weekly headings, wrapped cells, and printable layout. |
+| `--out-xlsx PATH` | Write the Excel workbook to an exact path instead (implies `--xlsx`). |
 
 ## Notes
 
